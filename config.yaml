@@ -1,0 +1,147 @@
+map_size: [25, 25]
+experiment_name: "full_utilitarian"
+map_path: "maps/quadrant_25x25_20each_30clump_no_water.txt"
+
+network_folder: "networks"
+loss_folder_phase1: "loss_plots_utilitarian/phase1"
+loss_folder_phase2: "loss_plots_utilitarian/phase2"
+loss_folder_phase3: "loss_plots_utilitarian/phase3"
+eval_folder: "eval_plots_utilitarian"
+use_gpu: False
+
+seed: 42
+
+wood_regen_prob: 0.5
+stone_regen_prob: 0.5
+
+n_envs: 8
+n_agents: 4
+starting_coins: 0
+view_size: 10
+
+agent_risk_aversion: 0.1
+
+planner: True
+bank: True
+
+episode_length: 1000
+tax_period_length: 100
+
+starting_interest_rate: 0.05
+target_inflation: 0.02
+
+final_min_interest_rate: -2.5 # (250%)
+final_max_interest_rate: 2.5 # (250%)
+final_min_monetary_injection: -100
+final_max_monetary_injection: 100
+annealing_duration: 50
+
+min_order_price: 0
+max_order_price: 100
+max_order_lifetime: 50
+max_num_orders: 5
+
+start_move_labour: 0.05
+move_labour: 0.05
+
+start_gather_labour: 0.1
+gather_labour: 0.1
+
+start_trade_labour: 0.15
+trade_labour: 0.15
+
+start_build_labour: 0.5
+build_labour: 0.5
+
+start_no_op_labour: 0.5
+no_op_labour: 0.5
+
+gather_prob: 0.5
+
+json_folder: "timestep_data"
+
+build_wood_cost: 1
+build_stone_cost: 1
+
+utility_type: "utilitarian"
+
+mobile_agent_training:
+  cnn_layers:
+    out_channels: [16, 32]
+    kernel_size: [3, 3]
+    stride: [1, 1]
+    padding: [1, 1]
+
+  fc_numeric_hidden_sizes: [128, 128]
+  fc_combined_hidden_size: [128, 128]
+
+  lstm_hidden_size: 128
+  lstm_num_layers: 1
+
+  num_updates: 200
+  exploration_steps: 0
+  epsilon_explore: 0.1
+  gamma: 0.99
+  lambda: 0.98
+  clip_epsilon: 0.2
+  ppo_epochs: 10
+  mini_batch_size: 128
+  learning_rate: 0.001
+  value_loss_weight: 0.5
+  entropy_weight: 0.7
+  min_entropy_weight: 0.01
+  target_kl: 0.01
+
+  utility_tolerance: 1.0
+  utility_patience: 10
+
+planner_agent_training:
+  fc_hidden_sizes: [128, 128]  
+  lstm_hidden_size: 128 
+  lstm_num_layers: 1  
+  post_lstm_hidden_sizes: [128, 64]  
+  
+  exploration_steps: 0
+  epsilon_explore: 0.1
+  gamma: 0.99
+  lambda: 0.98  
+  clip_epsilon: 0.2  
+  ppo_epochs: 10
+  mini_batch_size: 128
+  learning_rate: 0.001
+  value_loss_weight: 0.5
+  entropy_weight: 0.7
+  min_entropy_weight: 0.01
+  target_kl: 0.01  
+  utility_tolerance: 1.0
+  utility_patience: 10
+
+bank_agent_training:
+  fc_hidden_sizes: [128, 128]  
+  lstm_hidden_size: 128 
+  lstm_num_layers: 1  
+  post_lstm_hidden_sizes: [128, 64]  
+  
+  exploration_steps: 0
+  epsilon_explore: 0.1
+  gamma: 0.99
+  lambda: 0.98  
+  clip_epsilon: 0.2  
+  ppo_epochs: 10  
+  mini_batch_size: 128  
+  learning_rate: 0.001 
+  value_loss_weight: 0.5  
+  entropy_weight: 0.7
+  min_entropy_weight: 0.01
+  target_kl: 0.01  
+  utility_tolerance: 1.0
+  utility_patience: 10
+
+joint_training:
+  num_updates: 200
+  exploration_steps: 0
+  utility_tolerance: 1.0
+  utility_patience: 10
+
+n_tax_brackets: 7
+tax_brackets: [11, 47, 100, 192, 244, 610]
