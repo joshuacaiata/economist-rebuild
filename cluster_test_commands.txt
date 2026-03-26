@@ -1,0 +1,2 @@
+source env/bin/activate
+python main.py --config config_mobile_only.yaml --training-type two_phase --phase 1

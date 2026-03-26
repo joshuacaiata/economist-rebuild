@@ -159,6 +159,28 @@ class EconomyEnv:
     def reset_env(self, randomize_agent_positions=False):
         # Undo all houses (set to 0)
         self.map["Houses"] = np.zeros(self.map_size, dtype=int)
+        
+        # Reset Buildable tiles to 1 (except for water, wood, and stone tiles)
+        self.map["Buildable"] = np.ones(self.map_size, dtype=int)
+        
+        # Reset Wood and Stone resources
+        self.map["Wood"] = np.zeros(self.map_size, dtype=int)
+        self.map["Stone"] = np.zeros(self.map_size, dtype=int)
+        
+        # Regenerate resources based on probabilities
+        for row, col in self.wood_tiles:
+            if random.random() < self.wood_regen_prob:
+                self.map["Wood"][row, col] = 1
+            self.map["Buildable"][row, col] = 0
+        
+        for row, col in self.stone_tiles:
+            if random.random() < self.stone_regen_prob:
+                self.map["Stone"][row, col] = 1
+            self.map["Buildable"][row, col] = 0
+            
+        # Set water tiles as non-buildable
+        for row, col in self.water_tiles:
+            self.map["Buildable"][row, col] = 0
 
         # Clear all agents inventory
         for agent in self.all_agents:

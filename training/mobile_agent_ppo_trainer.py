@@ -131,7 +131,7 @@ class MultiAgentPPOTrainer:
             
             neigh_list, numeric_list = [], []
             buffer_keys, agent_ids, env_idxs = [], [], []
-            lstm_states_batch = [], []  
+            lstm_states_batch = [[], []] 
             
             for agent_data in all_agents_data:
                 env_idx = agent_data["env_idx"]
@@ -219,7 +219,7 @@ class MultiAgentPPOTrainer:
                 action = int(actions_batch[i].item())
 
                 reward, _ = self.vec_env.agent_step(env_idx, agent_id, action)
-                normalized_reward = self.normalize_reward(reward)
+                normalized_reward = reward 
 
                 self.rollout_buffers[buffer_key].append({
                     "neighbourhood": neighbourhood_batch[i].detach(),
@@ -236,23 +236,8 @@ class MultiAgentPPOTrainer:
             self.vec_env.step_envs()
 
     def normalize_reward(self, reward):
-        original_sign = np.sign(reward)
-
-        self.reward_normalizer["count"] += 1
-        delta = reward - self.reward_normalizer["running_mean"]
-        self.reward_normalizer["running_mean"] += delta / self.reward_normalizer["count"]
-        delta2 = reward - self.reward_normalizer["running_mean"]
-        self.reward_normalizer["running_var"] += delta * delta2
-        
-        var = self.reward_normalizer["running_var"] / (self.reward_normalizer["count"] + 1e-8)
-        std = np.sqrt(max(var, 1e-8))
-        normalized_reward = (reward - self.reward_normalizer["running_mean"]) / std
-
-        normalized_sign = np.sign(normalized_reward)
-        if original_sign != 0 and normalized_sign != 0 and original_sign != normalized_sign:
-            normalized_reward = abs(normalized_reward) * original_sign
-        
-        return np.clip(normalized_reward, -10.0, 10.0)
+        # Simple clipping without the buggy normalization
+        return np.clip(reward, -10.0, 10.0)
     
     def flatten_observation(self, observation):
         channels = [
@@ -361,12 +346,27 @@ class MultiAgentPPOTrainer:
                 surr1 = ratio * batch_advantages
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_epsilon, 1.0 + self.clip_epsilon) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
-                value_loss = F.mse_loss(values, batch_returns)
+                
+                batch_returns_norm = (batch_returns - batch_returns.mean()) / (batch_returns.std() + 1e-8)
+                values_norm = (values - values.mean()) / (values.std() + 1e-8)
+                
+                value_loss = F.mse_loss(values_norm, batch_returns_norm)
+                
                 loss = policy_loss + self.value_loss_weight * value_loss - self.entropy_weight * entropy
 
                 self.shared_optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.shared_policy.parameters(), 0.5)
+                
+                # Gradient clipping as per paper
+                clip_norm = self.config.get("mobile_agent_training", {}).get("gradient_clip_norm", 10.0)
+                torch.nn.utils.clip_grad_norm_(self.shared_policy.parameters(), clip_norm)
+                
+                # Check for NaN gradients
+                for param in self.shared_policy.parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        print("Warning: NaN gradient detected, skipping update")
+                        continue
+                
                 self.shared_optimizer.step()
 
                 total_policy_loss += policy_loss.item()
@@ -377,6 +377,11 @@ class MultiAgentPPOTrainer:
                 log_ratio = new_log_probs - batch_old_log_probs
                 approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).item()
                 approx_kl_divs.append(approx_kl_div)
+                
+                # # Early stopping if KL divergence gets too high (policy changing too much)
+                # if approx_kl_div > self.target_kl:
+                #     print(f"Early stopping PPO epoch {epoch} due to high KL divergence: {approx_kl_div:.4f}")
+                #     break
             
             avg_kl = sum(approx_kl_divs) / len(approx_kl_divs)
             if avg_kl > self.target_kl:
@@ -429,8 +434,18 @@ class MultiAgentPPOTrainer:
             logger.log("policy_loss", metrics["policy_loss"])
             logger.log("value_loss", metrics["value_loss"])
             logger.log("total_loss", metrics["total_loss"])
+            print(f"Policy loss: {metrics['policy_loss']:.4f}, Value loss: {metrics['value_loss']:.4f}, Total loss: {metrics['total_loss']:.4f}")
         else:
             self.update_shared_policy(all_data, logger)
+            # Print the losses that were just logged
+            if hasattr(logger, 'metrics') and logger.metrics:
+                policy_loss = logger.metrics.get("policy_loss", [])
+                value_loss = logger.metrics.get("value_loss", [])
+                total_loss = logger.metrics.get("total_loss", [])
+                reward = logger.metrics.get("reward", [])
+                
+                if policy_loss and value_loss and total_loss and reward:
+                    print(f"Policy loss: {policy_loss[-1]:.4f}, Value loss: {value_loss[-1]:.4f}, Total loss: {total_loss[-1]:.4f}, Reward: {reward[-1]:.4f}")
         return avg_utility
 
     def update_labour_values(self, update_idx):
@@ -514,7 +529,7 @@ class MultiAgentPPOTrainer:
                 print("Remote updater RRef created.")
             for update in range(self.num_updates):
                 print("-" * 10 + f"Update {update + 1} of {self.num_updates}" + "-" * 10)
-                self.lstm_states = {}
+
 
                 if update < self.exploration_steps:
                     random_sampling = True
@@ -552,7 +567,7 @@ class MultiAgentPPOTrainer:
                 self.entropy_weight = self.calculate_decaying_entropy_weight(update)
                 
                 reset_start_time = time.time()
-                self.vec_env.reset_all(randomize_agent_positions=True)
+                self.vec_env.reset_all(randomize_agent_positions=False)
                 reset_end_time = time.time()
                 reset_time = reset_end_time - reset_start_time
 

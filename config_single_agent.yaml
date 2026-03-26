@@ -1,0 +1,110 @@
+map_size: [25, 25]
+experiment_name: "single_agent_test"
+map_path: "maps/quadrant_25x25_20each_30clump_no_water.txt"
+
+network_folder: "networks"
+loss_folder_phase1: "loss_plots_single_agent/phase1"
+loss_folder_phase2: "loss_plots_single_agent/phase2"
+loss_folder_phase3: "loss_plots_single_agent/phase3"
+eval_folder: "eval_plots_single_agent"
+use_gpu: False
+
+seed: 42
+
+wood_regen_prob: 1.0  # Always spawn resources for consistent learning
+stone_regen_prob: 1.0  # Always spawn resources for consistent learning
+
+n_envs: 8  # Paper uses 30 parallel environments
+n_agents: 1  # Single agent configuration
+starting_coins: 5   # Give agent a small chance to succeed  
+view_size: 10
+
+agent_risk_aversion: 0.0
+
+planner: False  # Disable planner for single agent
+bank: False     # Disable bank for single agent
+
+episode_length: 200  # Paper uses 200 step horizon
+tax_period_length: 100
+
+# Bank-related settings (unused since bank: False)
+starting_interest_rate: 0.05
+target_inflation: 0.02
+final_min_interest_rate: -2.5
+final_max_interest_rate: 2.5
+final_min_monetary_injection: -100
+final_max_monetary_injection: 100
+annealing_duration: 50
+
+min_order_price: 0
+max_order_price: 10
+max_order_lifetime: 50
+max_num_orders: 5
+
+start_move_labour: 0.05
+move_labour: 0.05
+
+start_gather_labour: 0.1
+gather_labour: 0.1
+
+start_trade_labour: 0.15
+trade_labour: 0.15
+
+start_build_labour: 0.5
+build_labour: 0.5
+
+start_no_op_labour: 0.5
+no_op_labour: 0.5
+
+gather_prob: 0.5
+
+json_folder: "timestep_data"
+
+build_wood_cost: 1
+build_stone_cost: 1
+
+utility_type: "utilitarian"
+
+remote_updates: false  # Disable distributed training
+
+mobile_agent_training:
+  cnn_layers:
+    out_channels: [16, 32, 64]
+    kernel_size: [3, 3, 3]
+    stride: [1, 2, 2]  # Add downsampling to reduce spatial size
+    padding: [1, 1, 1]
+
+  fc_numeric_hidden_sizes: [128, 128]
+  fc_combined_hidden_size: [128, 128]
+
+  lstm_hidden_size: 256  # Larger LSTM to handle compressed CNN features
+  lstm_num_layers: 1
+
+  num_updates: 2000     # More updates to match paper's longer training
+  exploration_steps: 0 # Some exploration
+  epsilon_explore: 0.0  # Low exploration for stability
+  gamma: 0.99           # HIGH discount for long-term planning
+  lambda: 0.95          # HIGH lambda to propagate future rewards backward
+  clip_epsilon: 0.1     # Standard clipping
+  ppo_epochs: 3         # Moderate epochs for learning
+  mini_batch_size: 32   # Smaller batches to preserve good strategies
+  learning_rate: 1e-4 # Reasonable learning rate
+  value_loss_weight: 0.2 # Paper uses 0.05
+  entropy_weight: 0.04   # Moderate entropy for exploration
+  min_entropy_weight: 0.02  # Don't let entropy decay too much
+  target_kl: 0.02       # Lower KL to prevent policy destruction
+  gradient_clip_norm: 10.0  # Paper uses gradient clipping norm threshold of 10
+
+  utility_tolerance: 0.5  # Tighter tolerance for convergence
+  utility_patience: 20    # More patience for convergence
+
+# Note: planner and bank training configs removed since they're disabled
+
+joint_training:
+  num_updates: 200
+  exploration_steps: 0
+  utility_tolerance: 1.0
+  utility_patience: 10
+
+n_tax_brackets: 7
+tax_brackets: [11, 47, 100, 192, 244, 610]

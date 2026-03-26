@@ -108,9 +108,9 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                 mobile_network_name = f"mobile_agents-phase_{phase}-n_agents={n_agents}-experiment_name={experiment_name}"
                 mobile_network_path = os.path.join(networks_dir, f"{mobile_network_name}_COMPLETE.pth")
                 
-                basic_numeric_size = 7 + n_agents  
-                planner_features_size = config.get("n_tax_brackets", 7) + 1
-                bank_features_size = 4
+                basic_numeric_size = 7 + n_agents  # position(2) + inventory(3) + build_payout(1) + time_to_tax(1) + incomes(n_agents)
+                planner_features_size = config.get("n_tax_brackets", 7) + 1  # tax_rates (n_brackets) + tax_bracket
+                bank_features_size = 4  # inflation_rate, interest_rate, money_supply
 
                 mobile_network = load_network(
                     mobile_network_path,
@@ -155,7 +155,13 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                     agent.policy_net = mobile_network
                     random_sampling = False
             
-            if planner_network is not None and env.has_planner:
+            # Force enable planner and bank with zero policies to match training behavior
+            if not env.has_planner:
+                from training.vectorized_env import ZeroTaxPlannerWrapper
+                env.planner = ZeroTaxPlannerWrapper(env.planner)
+                env.has_planner = True
+                print("Force-enabled planner with zero tax policy (matching training)")
+            elif planner_network is not None and env.has_planner:
                 env.planner.policy_net = planner_network
             elif phase < 2 and env.has_planner:
                 env.planner = ZeroTaxPlannerWrapper(env.planner)
@@ -165,7 +171,12 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                 env.planner.policy_net = None
                 print("Using random actions for planner")
             
-            if bank_network is not None and env.has_bank:
+            if not env.has_bank:
+                from training.vectorized_env import ZeroBankPolicyWrapper
+                env.bank = ZeroBankPolicyWrapper(env.bank)
+                env.has_bank = True
+                print("Force-enabled bank with zero policy (matching training)")
+            elif bank_network is not None and env.has_bank:
                 env.bank.policy_net = bank_network
             elif phase < 3 and env.has_bank:
                 env.bank = ZeroBankPolicyWrapper(env.bank)
@@ -257,9 +268,9 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
             mobile_network_name = f"mobile_agents-phase_{phase}-n_agents={n_agents}-experiment_name={experiment_name}"
             mobile_network_path = os.path.join(networks_dir, f"{mobile_network_name}_COMPLETE.pth")
             
-            basic_numeric_size = 7 + n_agents  
-            planner_features_size = config.get("n_tax_brackets", 7) + 1
-            bank_features_size = 4
+            basic_numeric_size = 7 + n_agents  # position(2) + inventory(3) + build_payout(1) + time_to_tax(1) + incomes(n_agents)
+            planner_features_size = config.get("n_tax_brackets", 7) + 1  # tax_rates (n_brackets) + tax_bracket
+            bank_features_size = 4  # inflation_rate, interest_rate, money_supply
 
             mobile_network = load_network(
                 mobile_network_path,
@@ -304,7 +315,13 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                 agent.policy_net = mobile_network
                 random_sampling = False
         
-        if planner_network is not None and env.has_planner:
+        # Force enable planner and bank with zero policies to match training behavior
+        if not env.has_planner:
+            from training.vectorized_env import ZeroTaxPlannerWrapper
+            env.planner = ZeroTaxPlannerWrapper(env.planner)
+            env.has_planner = True
+            print("Force-enabled planner with zero tax policy (matching training)")
+        elif planner_network is not None and env.has_planner:
             env.planner.policy_net = planner_network
         elif phase < 2 and env.has_planner:
             env.planner = ZeroTaxPlannerWrapper(env.planner)
@@ -314,7 +331,12 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
             env.planner.policy_net = None
             print("Using random actions for planner")
         
-        if bank_network is not None and env.has_bank:
+        if not env.has_bank:
+            from training.vectorized_env import ZeroBankPolicyWrapper
+            env.bank = ZeroBankPolicyWrapper(env.bank)
+            env.has_bank = True
+            print("Force-enabled bank with zero policy (matching training)")
+        elif bank_network is not None and env.has_bank:
             env.bank.policy_net = bank_network
         elif phase < 3 and env.has_bank:
             env.bank = ZeroBankPolicyWrapper(env.bank)

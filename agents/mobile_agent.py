@@ -397,11 +397,15 @@ class MobileAgent(BaseAgent):
             return False
 
     def get_utility(self):
+        coins = max(self.inventory["coins"], 1e-6)
+        
         if self.risk_aversion == 1:
-            return np.log(self.inventory["coins"])
+            utility = np.log(coins)
         else:
-            utility = (self.inventory["coins"] ** (1 - self.risk_aversion) - 1) / (1 - self.risk_aversion)
-            return utility - self.labour
+            utility = (coins ** (1 - self.risk_aversion) - 1) / (1 - self.risk_aversion)
+        
+        final_utility = utility - self.labour
+        return final_utility
         
     def reset_year(self):
         self.ending_coins_previous_year = self.inventory["coins"]
@@ -410,7 +414,7 @@ class MobileAgent(BaseAgent):
         self.inventory = {
             "wood": 0,
             "stone": 0,
-            "coins": 0
+            "coins": self.config["starting_coins"] 
         }
 
         self.escrow = {
