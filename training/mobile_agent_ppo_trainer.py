@@ -312,11 +312,14 @@ class MultiAgentPPOTrainer:
         total_loss = 0
         batches = 0
 
+        num_mini_batches = (dataset_size + self.mini_batch_size - 1) // self.mini_batch_size
         for epoch in range(self.ppo_epochs):
-            random.shuffle(indices)            
+            random.shuffle(indices)
             approx_kl_divs = []
-            
-            for start in range(0, dataset_size, self.mini_batch_size):
+
+            for start in tqdm(range(0, dataset_size, self.mini_batch_size),
+                              desc=f"PPO epoch {epoch+1}/{self.ppo_epochs}",
+                              total=num_mini_batches):
                 end = start + self.mini_batch_size
                 batch_idx = indices[start:end]
                 batch_neigh = neighbourhoods[batch_idx]
