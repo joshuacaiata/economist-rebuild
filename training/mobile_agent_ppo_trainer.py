@@ -163,11 +163,13 @@ class MultiAgentPPOTrainer:
             else:
                 lstm_state_batch = None
 
+            all_masks = self.vec_env.get_all_action_masks()
             action_masks = []
             for i in range(len(buffer_keys)):
                 env_idx = env_idxs[i]
                 agent_id = agent_ids[i]
-                action_mask = self.vec_env.get_agent_action_mask(env_idx, agent_id)
+                action_mask = all_masks.get(env_idx, {}).get(agent_id,
+                    np.ones(self.vec_env.env_ref.mobile_agents[0].action_range + 1, dtype=bool))
                 action_masks.append(action_mask)
             action_masks_tensor = torch.tensor(np.array(action_masks), dtype=torch.bool).to(self.device)
 
@@ -212,23 +214,34 @@ class MultiAgentPPOTrainer:
                     c_agent = c_out[:, i:i+1, :].detach()
                     self.lstm_states[buffer_key] = (h_agent, c_agent)
 
+            # Build actions grouped by env for batch stepping
+            actions_by_env = {}
+            for i in range(len(buffer_keys)):
+                env_idx = env_idxs[i]
+                agent_id = agent_ids[i]
+                action = int(actions_batch[i].item())
+                if env_idx not in actions_by_env:
+                    actions_by_env[env_idx] = {}
+                actions_by_env[env_idx][agent_id] = action
+
+            # Step all agents in all envs in parallel
+            batch_results = self.vec_env.batch_agent_timestep(actions_by_env)
+
             for i in range(len(buffer_keys)):
                 env_idx = env_idxs[i]
                 agent_id = agent_ids[i]
                 buffer_key = buffer_keys[i]
-                action = int(actions_batch[i].item())
-
-                reward, _ = self.vec_env.agent_step(env_idx, agent_id, action)
-                normalized_reward = reward 
+                result = batch_results.get(env_idx, {}).get(agent_id, {})
+                reward = result.get("reward", 0.0)
 
                 self.rollout_buffers[buffer_key].append({
                     "neighbourhood": neighbourhood_batch[i].detach(),
                     "numeric": numeric_batch[i].detach(),
-                    "action": action,
+                    "action": actions_by_env[env_idx][agent_id],
                     "log_prob": log_probs_batch[i].detach(),
                     "value": values_batch[i].detach(),
-                    "reward": normalized_reward,
-                    "utility": self.vec_env.get_agent_utility(env_idx, agent_id),
+                    "reward": reward,
+                    "utility": result.get("utility", 0.0),
                     "original_reward": reward,
                     "action_mask": action_masks[i],
                 })

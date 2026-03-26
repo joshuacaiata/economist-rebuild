@@ -136,6 +136,37 @@ class VectorizedEnv:
                     else:
                         pipe.send((0.0, 0.0))
                     
+                elif cmd == "batch_agent_timestep":
+                    # data is a dict of {agent_id: action}
+                    actions = data
+                    results = {}
+                    for agent in env.mobile_agents:
+                        aid = agent.agent_id
+                        action_mask = agent.get_action_mask()
+                        if aid in actions:
+                            prev_util = agent.get_utility()
+                            agent.step(actions[aid])
+                            current_util = agent.get_utility()
+                            reward = current_util - prev_util
+                            results[aid] = {
+                                "action_mask": action_mask,
+                                "reward": reward,
+                                "utility": current_util,
+                            }
+                        else:
+                            results[aid] = {
+                                "action_mask": action_mask,
+                                "reward": 0.0,
+                                "utility": agent.get_utility(),
+                            }
+                    pipe.send(results)
+
+                elif cmd == "get_action_masks":
+                    masks = {}
+                    for agent in env.mobile_agents:
+                        masks[agent.agent_id] = agent.get_action_mask()
+                    pipe.send(masks)
+
                 elif cmd == "close":
                     pipe.close()
                     break
@@ -242,10 +273,16 @@ class VectorizedEnv:
                 break
 
     def _process_batch(self, start_idx, end_idx, cmd, data=None):
-        results = []
+        # Send all commands first
         for i in range(start_idx, end_idx):
             try:
                 self.pipes[i].send((cmd, data))
+            except (EOFError, BrokenPipeError):
+                pass
+        # Then collect all results
+        results = []
+        for i in range(start_idx, end_idx):
+            try:
                 result = self.pipes[i].recv()
                 results.append((i, result))
             except (EOFError, BrokenPipeError):
@@ -307,13 +344,48 @@ class VectorizedEnv:
     def get_agent_action_mask(self, env_idx, agent_id):
         if env_idx >= self.total_envs:
             return np.ones(self.env_ref.mobile_agents[0].action_range + 1, dtype=bool)
-            
+
         try:
             self.pipes[env_idx].send(("get_agent_action_mask", agent_id))
             action_mask = self.pipes[env_idx].recv()
             return action_mask
         except (EOFError, BrokenPipeError):
             return np.ones(self.env_ref.mobile_agents[0].action_range + 1, dtype=bool)
+
+    def get_all_action_masks(self):
+        """Get action masks for all agents in all envs in parallel."""
+        for i in range(self.total_envs):
+            try:
+                self.pipes[i].send(("get_action_masks", None))
+            except (EOFError, BrokenPipeError):
+                pass
+        results = {}
+        for i in range(self.total_envs):
+            try:
+                masks = self.pipes[i].recv()
+                results[i] = masks
+            except (EOFError, BrokenPipeError):
+                results[i] = {}
+        return results
+
+    def batch_agent_timestep(self, actions_by_env):
+        """Step all agents in all envs in parallel.
+
+        actions_by_env: dict of {env_idx: {agent_id: action}}
+        Returns: dict of {env_idx: {agent_id: {action_mask, reward, utility}}}
+        """
+        for env_idx, agent_actions in actions_by_env.items():
+            try:
+                self.pipes[env_idx].send(("batch_agent_timestep", agent_actions))
+            except (EOFError, BrokenPipeError):
+                pass
+        results = {}
+        for env_idx in actions_by_env:
+            try:
+                results[env_idx] = self.pipes[env_idx].recv()
+            except (EOFError, BrokenPipeError):
+                results[env_idx] = {}
+        return results
 
     def get_planner_utility(self, env_idx):
         if env_idx >= self.total_envs:
