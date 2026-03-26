@@ -36,7 +36,7 @@ class VectorizedEnv:
         self.available_cores = multiprocessing.cpu_count()
         print(f"Available CPU cores: {self.available_cores}")
         
-        self.batch_size = max(1, int(self.available_cores * 0.9))
+        self.batch_size = max(1, int(self.available_cores))
         print(f"Running environments in batches of {self.batch_size}")
         
         self.mp_ctx = mp.get_context('spawn')
