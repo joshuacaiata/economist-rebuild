@@ -148,23 +148,22 @@ class MultiAgentPPOTrainer:
                     lstm_states_batch[0].append(h)
                     lstm_states_batch[1].append(c)
 
-            # Keep rollout inference on CPU to avoid transfer overhead
-            neighbourhood_batch = torch.stack(neigh_list)
-            numeric_batch = torch.stack(numeric_list)
+            neighbourhood_batch = torch.stack(neigh_list).to(self.device)
+            numeric_batch = torch.stack(numeric_list).to(self.device)
 
             if lstm_states_batch[0]:
-                h_batch = torch.cat(lstm_states_batch[0], dim=1)
-                c_batch = torch.cat(lstm_states_batch[1], dim=1)
+                h_batch = torch.cat(lstm_states_batch[0], dim=1).to(self.device)
+                c_batch = torch.cat(lstm_states_batch[1], dim=1).to(self.device)
                 lstm_state_batch = (h_batch, c_batch)
             else:
                 lstm_state_batch = None
 
-            action_masks_tensor = torch.tensor(np.array(action_masks), dtype=torch.bool)
+            action_masks_tensor = torch.tensor(np.array(action_masks), dtype=torch.bool).to(self.device)
 
             if random_sampling or random.random() < self.epsilon_explore:
                 actions_batch = []
                 log_probs_batch = []
-                values_batch = torch.zeros(len(buffer_keys), 1)
+                values_batch = torch.zeros(len(buffer_keys), 1).to(self.device)
                 lstm_state_out = (torch.zeros_like(h_batch), torch.zeros_like(c_batch)) if lstm_state_batch else None
 
                 for mask in action_masks:
@@ -178,11 +177,10 @@ class MultiAgentPPOTrainer:
                         actions_batch.append(0)
                         log_probs_batch.append(0.0)
 
-                actions_batch = torch.tensor(actions_batch)
-                log_probs_batch = torch.tensor(log_probs_batch)
+                actions_batch = torch.tensor(actions_batch, device=self.device)
+                log_probs_batch = torch.tensor(log_probs_batch, device=self.device)
             else:
                 self.shared_policy.eval()
-                self.shared_policy.to("cpu")
                 with torch.no_grad():
                     logits_batch, values_batch, lstm_state_out = self.shared_policy(
                         neighbourhood_batch, numeric_batch, lstm_state_batch
@@ -296,7 +294,6 @@ class MultiAgentPPOTrainer:
         return advantages, returns
 
     def update_shared_policy(self, all_data, logger):
-        self.shared_policy.to(self.device)
         neighbourhoods = torch.stack([t["neighbourhood"] for t in all_data]).to(self.device)
         numerics = torch.stack([t["numeric"] for t in all_data]).to(self.device)
         actions = torch.LongTensor([t["action"] for t in all_data]).to(self.device)
