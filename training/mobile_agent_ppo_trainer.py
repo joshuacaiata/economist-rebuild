@@ -120,19 +120,13 @@ class MultiAgentPPOTrainer:
             self.lstm_states = {}
         
         for t in range(self.horizon):
-            all_agents_data = self.vec_env.get_all_agent_observations()
-            
-            env_agents = {}
-            for agent_data in all_agents_data:
-                env_idx = agent_data["env_idx"]
-                if env_idx not in env_agents:
-                    env_agents[env_idx] = []
-                env_agents[env_idx].append(agent_data)
-            
+            all_agents_data = self.vec_env.get_all_obs_and_masks()
+
             neigh_list, numeric_list = [], []
             buffer_keys, agent_ids, env_idxs = [], [], []
-            lstm_states_batch = [[], []] 
-            
+            lstm_states_batch = [[], []]
+            action_masks = []
+
             for agent_data in all_agents_data:
                 env_idx = agent_data["env_idx"]
                 agent_id = agent_data["agent_id"]
@@ -145,9 +139,10 @@ class MultiAgentPPOTrainer:
                 buffer_keys.append(buffer_key)
                 agent_ids.append(agent_id)
                 env_idxs.append(env_idx)
-                
+                action_masks.append(agent_data["action_mask"])
+
                 agent_lstm_state = self.lstm_states.get(buffer_key, None)
-                
+
                 if agent_lstm_state is not None:
                     h, c = agent_lstm_state
                     lstm_states_batch[0].append(h)
@@ -155,7 +150,7 @@ class MultiAgentPPOTrainer:
 
             neighbourhood_batch = torch.stack(neigh_list).to(self.device)
             numeric_batch = torch.stack(numeric_list).to(self.device)
-            
+
             if lstm_states_batch[0]:
                 h_batch = torch.cat(lstm_states_batch[0], dim=1)
                 c_batch = torch.cat(lstm_states_batch[1], dim=1)
@@ -163,14 +158,6 @@ class MultiAgentPPOTrainer:
             else:
                 lstm_state_batch = None
 
-            all_masks = self.vec_env.get_all_action_masks()
-            action_masks = []
-            for i in range(len(buffer_keys)):
-                env_idx = env_idxs[i]
-                agent_id = agent_ids[i]
-                action_mask = all_masks.get(env_idx, {}).get(agent_id,
-                    np.ones(self.vec_env.env_ref.mobile_agents[0].action_range + 1, dtype=bool))
-                action_masks.append(action_mask)
             action_masks_tensor = torch.tensor(np.array(action_masks), dtype=torch.bool).to(self.device)
 
             if random_sampling or random.random() < self.epsilon_explore:
@@ -224,8 +211,8 @@ class MultiAgentPPOTrainer:
                     actions_by_env[env_idx] = {}
                 actions_by_env[env_idx][agent_id] = action
 
-            # Step all agents in all envs in parallel
-            batch_results = self.vec_env.batch_agent_timestep(actions_by_env)
+            # Step all agents and env in all envs in parallel (single round-trip)
+            batch_results = self.vec_env.step_agents_and_env(actions_by_env)
 
             for i in range(len(buffer_keys)):
                 env_idx = env_idxs[i]
@@ -245,8 +232,6 @@ class MultiAgentPPOTrainer:
                     "original_reward": reward,
                     "action_mask": action_masks[i],
                 })
-
-            self.vec_env.step_envs()
 
     def normalize_reward(self, reward):
         # Simple clipping without the buggy normalization

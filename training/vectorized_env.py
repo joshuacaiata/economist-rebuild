@@ -136,6 +136,46 @@ class VectorizedEnv:
                     else:
                         pipe.send((0.0, 0.0))
                     
+                elif cmd == "get_obs_and_masks":
+                    agents_data = []
+                    for agent in env.mobile_agents:
+                        obs = agent.get_observations(env)
+                        agent_data = {
+                            "agent_id": agent.agent_id,
+                            "utility": agent.get_utility(),
+                            "obs": obs,
+                            "action_mask": agent.get_action_mask(),
+                        }
+                        agents_data.append(agent_data)
+                    pipe.send(agents_data)
+
+                elif cmd == "step_agents_and_env":
+                    # data is a dict of {agent_id: action}
+                    actions = data
+                    results = {}
+                    for agent in env.mobile_agents:
+                        aid = agent.agent_id
+                        if aid in actions:
+                            prev_util = agent.get_utility()
+                            agent.step(actions[aid])
+                            current_util = agent.get_utility()
+                            results[aid] = {
+                                "reward": current_util - prev_util,
+                                "utility": current_util,
+                            }
+                        else:
+                            results[aid] = {
+                                "reward": 0.0,
+                                "utility": agent.get_utility(),
+                            }
+                    # Also step the environment (trading, time, regen, tax)
+                    env.trading_system.step()
+                    env.time += 1
+                    env.regen_tiles()
+                    if env.time > 0 and env.time % env.tax_period_length == 0:
+                        env.reset_year()
+                    pipe.send(results)
+
                 elif cmd == "batch_agent_timestep":
                     # data is a dict of {agent_id: action}
                     actions = data
@@ -366,6 +406,44 @@ class VectorizedEnv:
                 results[i] = masks
             except (EOFError, BrokenPipeError):
                 results[i] = {}
+        return results
+
+    def get_all_obs_and_masks(self):
+        """Get observations and action masks for all agents in all envs in one parallel call."""
+        for i in range(self.total_envs):
+            try:
+                self.pipes[i].send(("get_obs_and_masks", None))
+            except (EOFError, BrokenPipeError):
+                pass
+        all_agents_data = []
+        for i in range(self.total_envs):
+            try:
+                agents_data = self.pipes[i].recv()
+                if agents_data is not None:
+                    for agent_data in agents_data:
+                        agent_data["env_idx"] = i
+                        all_agents_data.append(agent_data)
+            except (EOFError, BrokenPipeError):
+                pass
+        return all_agents_data
+
+    def step_agents_and_env(self, actions_by_env):
+        """Step all agents and the environment in all envs in parallel.
+
+        actions_by_env: dict of {env_idx: {agent_id: action}}
+        Returns: dict of {env_idx: {agent_id: {reward, utility}}}
+        """
+        for env_idx, agent_actions in actions_by_env.items():
+            try:
+                self.pipes[env_idx].send(("step_agents_and_env", agent_actions))
+            except (EOFError, BrokenPipeError):
+                pass
+        results = {}
+        for env_idx in actions_by_env:
+            try:
+                results[env_idx] = self.pipes[env_idx].recv()
+            except (EOFError, BrokenPipeError):
+                results[env_idx] = {}
         return results
 
     def batch_agent_timestep(self, actions_by_env):
