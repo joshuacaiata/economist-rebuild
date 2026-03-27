@@ -95,12 +95,9 @@ class MultiAgentPPOTrainer:
         
         os.makedirs(self.network_folder, exist_ok=True)
         
-        self.reward_normalizer = {
-            "running_mean": 0,
-            "running_var": 1,
-            "count": 0,
-            "gamma": 0.99
-        }
+        self.obs_running_mean = None
+        self.obs_running_var = None
+        self.obs_count = 0
     
     def collect_rollouts(self, random_sampling=False):
         if random_sampling:
@@ -233,6 +230,20 @@ class MultiAgentPPOTrainer:
                     "action_mask": action_masks[i],
                 })
 
+    def _normalize_obs(self, obs):
+        if self.obs_running_mean is None:
+            self.obs_running_mean = np.zeros_like(obs)
+            self.obs_running_var = np.ones_like(obs)
+
+        self.obs_count += 1
+        delta = obs - self.obs_running_mean
+        self.obs_running_mean += delta / self.obs_count
+        delta2 = obs - self.obs_running_mean
+        self.obs_running_var += (delta * delta2 - self.obs_running_var) / self.obs_count
+
+        std = np.sqrt(self.obs_running_var + 1e-8)
+        return (obs - self.obs_running_mean) / std
+
     def normalize_reward(self, reward):
         return reward / 100.0
     
@@ -243,23 +254,17 @@ class MultiAgentPPOTrainer:
         ]
         neighbourhood_tensor = torch.stack(channels, dim=0)
 
-        map_size = max(self.config["map_size"])
-        tax_period = self.config["tax_period_length"]
-        max_price = self.config["max_order_price"]
-        n_agents = self.config["n_agents"]
-        max_coins = max_price * n_agents * 10
+        pos = np.array(observation["position"], dtype=np.float32)
+        inv = np.array([observation["inventory"]["wood"],
+                        observation["inventory"]["stone"],
+                        observation["inventory"]["coins"]], dtype=np.float32)
 
-        pos = np.array(observation["position"], dtype=np.float32) / map_size
-        inv = np.array([observation["inventory"]["wood"] / max_price,
-                        observation["inventory"]["stone"] / max_price,
-                        observation["inventory"]["coins"] / max_coins], dtype=np.float32)
+        bp = np.array([observation["build_payout"]], dtype=np.float32)
+        ttt = np.array([observation["time_to_tax"]], dtype=np.float32)
+        incomes = np.array(observation["incomes"], dtype=np.float32)
 
-        bp = np.array([observation["build_payout"] / max_price], dtype=np.float32)
-        ttt = np.array([observation["time_to_tax"] / tax_period], dtype=np.float32)
-        incomes = np.array(observation["incomes"], dtype=np.float32) / max_coins
-        
         features = [pos, inv, bp, ttt, incomes]
-        
+
         if "tax_rates" in observation and "tax_bracket" in observation:
             tax_rates = np.array(observation["tax_rates"], dtype=np.float32)
             tax_bracket = np.array([observation["tax_bracket"]], dtype=np.float32)
@@ -268,11 +273,12 @@ class MultiAgentPPOTrainer:
         if "inflation_rate" in observation and "interest_rate" in observation and "money_supply" in observation:
             inflation_rate = np.array([observation["inflation_rate"]], dtype=np.float32)
             interest_rate = np.array([observation["interest_rate"]], dtype=np.float32)
-            money_supply = np.array([observation["money_supply"] / max_coins], dtype=np.float32)
+            money_supply = np.array([observation["money_supply"]], dtype=np.float32)
             target_inflation = np.array([observation["target_inflation"]], dtype=np.float32)
             features.extend([inflation_rate, interest_rate, money_supply, target_inflation])
-        
+
         numeric = np.concatenate(features)
+        numeric = self._normalize_obs(numeric)
         numeric_tensor = torch.tensor(numeric, dtype=torch.float32)
         
         return neighbourhood_tensor, numeric_tensor
