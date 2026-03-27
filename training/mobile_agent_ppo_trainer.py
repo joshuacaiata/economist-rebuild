@@ -222,12 +222,12 @@ class MultiAgentPPOTrainer:
                 reward = result.get("reward", 0.0)
 
                 self.rollout_buffers[buffer_key].append({
-                    "neighbourhood": neighbourhood_batch[i].detach(),
-                    "numeric": numeric_batch[i].detach(),
+                    "neighbourhood": neighbourhood_batch[i].detach().cpu(),
+                    "numeric": numeric_batch[i].detach().cpu(),
                     "action": actions_by_env[env_idx][agent_id],
-                    "log_prob": log_probs_batch[i].detach(),
-                    "value": values_batch[i].detach(),
-                    "reward": reward,
+                    "log_prob": log_probs_batch[i].detach().cpu(),
+                    "value": values_batch[i].detach().cpu(),
+                    "reward": self.normalize_reward(reward),
                     "utility": result.get("utility", 0.0),
                     "original_reward": reward,
                     "action_mask": action_masks[i],
@@ -348,10 +348,7 @@ class MultiAgentPPOTrainer:
                 surr2 = torch.clamp(ratio, 1.0 - self.clip_epsilon, 1.0 + self.clip_epsilon) * batch_advantages
                 policy_loss = -torch.min(surr1, surr2).mean()
                 
-                batch_returns_norm = (batch_returns - batch_returns.mean()) / (batch_returns.std() + 1e-8)
-                values_norm = (values - values.mean()) / (values.std() + 1e-8)
-                
-                value_loss = F.mse_loss(values_norm, batch_returns_norm)
+                value_loss = F.mse_loss(values, batch_returns)
                 
                 loss = policy_loss + self.value_loss_weight * value_loss - self.entropy_weight * entropy
 
@@ -363,12 +360,15 @@ class MultiAgentPPOTrainer:
                 torch.nn.utils.clip_grad_norm_(self.shared_policy.parameters(), clip_norm)
                 
                 # Check for NaN gradients
+                has_nan = False
                 for param in self.shared_policy.parameters():
                     if param.grad is not None and torch.isnan(param.grad).any():
                         print("Warning: NaN gradient detected, skipping update")
-                        continue
-                
-                self.shared_optimizer.step()
+                        has_nan = True
+                        break
+
+                if not has_nan:
+                    self.shared_optimizer.step()
 
                 total_policy_loss += policy_loss.item()
                 total_value_loss += value_loss.item()
