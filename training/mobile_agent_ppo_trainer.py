@@ -222,11 +222,11 @@ class MultiAgentPPOTrainer:
                 reward = result.get("reward", 0.0)
 
                 self.rollout_buffers[buffer_key].append({
-                    "neighbourhood": neighbourhood_batch[i].detach().cpu(),
-                    "numeric": numeric_batch[i].detach().cpu(),
+                    "neighbourhood": neighbourhood_batch[i].detach(),
+                    "numeric": numeric_batch[i].detach(),
                     "action": actions_by_env[env_idx][agent_id],
-                    "log_prob": log_probs_batch[i].detach().cpu(),
-                    "value": values_batch[i].detach().cpu(),
+                    "log_prob": log_probs_batch[i].detach(),
+                    "value": values_batch[i].detach(),
                     "reward": self.normalize_reward(reward),
                     "utility": result.get("utility", 0.0),
                     "original_reward": reward,
