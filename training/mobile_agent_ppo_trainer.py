@@ -148,8 +148,8 @@ class MultiAgentPPOTrainer:
                     h, c = agent_lstm_state
                     lstm_states_batch[0].append(h)
                     lstm_states_batch[1].append(c)
-                    per_agent_lstm_h.append(h.detach().squeeze(1))
-                    per_agent_lstm_c.append(c.detach().squeeze(1))
+                    per_agent_lstm_h.append(h.detach().squeeze(1).cpu())
+                    per_agent_lstm_c.append(c.detach().squeeze(1).cpu())
                 else:
                     per_agent_lstm_h.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
                     per_agent_lstm_c.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
