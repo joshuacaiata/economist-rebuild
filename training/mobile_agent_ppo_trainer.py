@@ -234,8 +234,7 @@ class MultiAgentPPOTrainer:
                 })
 
     def normalize_reward(self, reward):
-        # Simple clipping without the buggy normalization
-        return np.clip(reward, -10.0, 10.0)
+        return reward / 100.0
     
     def flatten_observation(self, observation):
         channels = [
@@ -244,14 +243,20 @@ class MultiAgentPPOTrainer:
         ]
         neighbourhood_tensor = torch.stack(channels, dim=0)
 
-        pos = np.array(observation["position"], dtype=np.float32)
-        inv = np.array([observation["inventory"]["wood"],
-                        observation["inventory"]["stone"],
-                        observation["inventory"]["coins"]], dtype=np.float32)
-        
-        bp = np.array([observation["build_payout"]], dtype=np.float32)
-        ttt = np.array([observation["time_to_tax"]], dtype=np.float32)
-        incomes = np.array(observation["incomes"], dtype=np.float32)
+        map_size = max(self.config["map_size"])
+        tax_period = self.config["tax_period_length"]
+        max_price = self.config["max_order_price"]
+        n_agents = self.config["n_agents"]
+        max_coins = max_price * n_agents * 10
+
+        pos = np.array(observation["position"], dtype=np.float32) / map_size
+        inv = np.array([observation["inventory"]["wood"] / max_price,
+                        observation["inventory"]["stone"] / max_price,
+                        observation["inventory"]["coins"] / max_coins], dtype=np.float32)
+
+        bp = np.array([observation["build_payout"] / max_price], dtype=np.float32)
+        ttt = np.array([observation["time_to_tax"] / tax_period], dtype=np.float32)
+        incomes = np.array(observation["incomes"], dtype=np.float32) / max_coins
         
         features = [pos, inv, bp, ttt, incomes]
         
@@ -263,7 +268,7 @@ class MultiAgentPPOTrainer:
         if "inflation_rate" in observation and "interest_rate" in observation and "money_supply" in observation:
             inflation_rate = np.array([observation["inflation_rate"]], dtype=np.float32)
             interest_rate = np.array([observation["interest_rate"]], dtype=np.float32)
-            money_supply = np.array([observation["money_supply"]], dtype=np.float32)
+            money_supply = np.array([observation["money_supply"] / max_coins], dtype=np.float32)
             target_inflation = np.array([observation["target_inflation"]], dtype=np.float32)
             features.extend([inflation_rate, interest_rate, money_supply, target_inflation])
         
@@ -370,24 +375,27 @@ class MultiAgentPPOTrainer:
                 if not has_nan:
                     self.shared_optimizer.step()
 
-                total_policy_loss += policy_loss.item()
-                total_value_loss += value_loss.item()
-                total_loss += loss.item()
-                batches += 1
+                    total_policy_loss += policy_loss.item()
+                    total_value_loss += value_loss.item()
+                    total_loss += loss.item()
+                    batches += 1
 
-                log_ratio = new_log_probs - batch_old_log_probs
-                approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).item()
-                approx_kl_divs.append(approx_kl_div)
+                    log_ratio = new_log_probs - batch_old_log_probs
+                    approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).item()
+                    approx_kl_divs.append(approx_kl_div)
                 
                 # # Early stopping if KL divergence gets too high (policy changing too much)
                 # if approx_kl_div > self.target_kl:
                 #     print(f"Early stopping PPO epoch {epoch} due to high KL divergence: {approx_kl_div:.4f}")
                 #     break
             
-            avg_kl = sum(approx_kl_divs) / len(approx_kl_divs)
-            if avg_kl > self.target_kl:
-                break
+            if approx_kl_divs:
+                avg_kl = sum(approx_kl_divs) / len(approx_kl_divs)
+                if avg_kl > self.target_kl:
+                    break
 
+        if batches == 0:
+            batches = 1
         avg_policy_loss = total_policy_loss / batches
         avg_value_loss = total_value_loss / batches
         avg_total_loss = total_loss / batches
@@ -569,6 +577,7 @@ class MultiAgentPPOTrainer:
                 
                 reset_start_time = time.time()
                 self.vec_env.reset_all(randomize_agent_positions=False)
+                self.lstm_states = {}
                 reset_end_time = time.time()
                 reset_time = reset_end_time - reset_start_time
 
