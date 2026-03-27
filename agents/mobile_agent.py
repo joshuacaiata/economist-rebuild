@@ -49,6 +49,7 @@ class MobileAgent(BaseAgent):
         self.util_step_0 = self.get_utility()
 
         self.rollout_buffer = []
+        self.obs_stats = None
 
 
     def get_observations(self, env):
@@ -169,8 +170,11 @@ class MobileAgent(BaseAgent):
             features.extend([interest_rate, inflation_rate, money_supply, target_inflation]) 
         
         numeric = np.concatenate(features)
+        if self.obs_stats is not None:
+            std = np.sqrt(self.obs_stats["var"] + 1e-8)
+            numeric = (numeric - self.obs_stats["mean"]) / std
         numeric_tensor = torch.FloatTensor(numeric)
-        
+
         return neighbourhood_tensor, numeric_tensor
 
     def get_action(self, neighbourhood, numeric, random_sampling=False):

@@ -10,6 +10,23 @@ from training.planner_policy import PlannerPolicy
 from training.bank_policy import BankPolicy
 from training.vectorized_env import ZeroTaxPlannerWrapper, ZeroBankPolicyWrapper
 
+def load_obs_stats(network_path):
+    stats_path = network_path.replace("_COMPLETE.pth", "_COMPLETE_obs_stats.npz")
+    if not os.path.exists(stats_path):
+        stats_path = network_path.replace("_COMPLETE.pth", "_PARTIAL_obs_stats.npz")
+    if os.path.exists(stats_path):
+        data = np.load(stats_path)
+        print(f"Loaded obs normalization stats from {stats_path}")
+        return {"mean": data["mean"], "var": data["var"]}
+    print("No obs normalization stats found, using raw observations")
+    return None
+
+def apply_obs_normalization(obs_numeric, obs_stats):
+    if obs_stats is None:
+        return obs_numeric
+    std = np.sqrt(obs_stats["var"] + 1e-8)
+    return (obs_numeric - obs_stats["mean"]) / std
+
 def load_network(network_path, network_class, config, **kwargs):
     try:
         state_dict = torch.load(network_path, map_location=torch.device('cpu'))
@@ -151,10 +168,12 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                     )
 
             if mobile_network is not None:
+                obs_stats = load_obs_stats(mobile_network_path)
                 for agent in env.mobile_agents:
                     agent.policy_net = mobile_network
+                    agent.obs_stats = obs_stats
                     random_sampling = False
-            
+
             # Force enable planner and bank with zero policies to match training behavior
             if not env.has_planner:
                 from training.vectorized_env import ZeroTaxPlannerWrapper
@@ -311,10 +330,12 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                 )
 
         if mobile_network is not None:
+            obs_stats = load_obs_stats(mobile_network_path)
             for agent in env.mobile_agents:
                 agent.policy_net = mobile_network
+                agent.obs_stats = obs_stats
                 random_sampling = False
-        
+
         # Force enable planner and bank with zero policies to match training behavior
         if not env.has_planner:
             from training.vectorized_env import ZeroTaxPlannerWrapper

@@ -122,7 +122,11 @@ class MultiAgentPPOTrainer:
             neigh_list, numeric_list = [], []
             buffer_keys, agent_ids, env_idxs = [], [], []
             lstm_states_batch = [[], []]
+            per_agent_lstm_h = []
+            per_agent_lstm_c = []
             action_masks = []
+            lstm_hidden_size = self.shared_policy.lstm_hidden_size
+            lstm_num_layers = self.shared_policy.lstm_num_layers
 
             for agent_data in all_agents_data:
                 env_idx = agent_data["env_idx"]
@@ -144,6 +148,11 @@ class MultiAgentPPOTrainer:
                     h, c = agent_lstm_state
                     lstm_states_batch[0].append(h)
                     lstm_states_batch[1].append(c)
+                    per_agent_lstm_h.append(h.detach().squeeze(1))
+                    per_agent_lstm_c.append(c.detach().squeeze(1))
+                else:
+                    per_agent_lstm_h.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
+                    per_agent_lstm_c.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
 
             neighbourhood_batch = torch.stack(neigh_list).to(self.device)
             numeric_batch = torch.stack(numeric_list).to(self.device)
@@ -228,6 +237,8 @@ class MultiAgentPPOTrainer:
                     "utility": result.get("utility", 0.0),
                     "original_reward": reward,
                     "action_mask": action_masks[i],
+                    "lstm_h": per_agent_lstm_h[i],
+                    "lstm_c": per_agent_lstm_c[i],
                 })
 
     def _normalize_obs(self, obs):
@@ -243,6 +254,20 @@ class MultiAgentPPOTrainer:
 
         std = np.sqrt(self.obs_running_var + 1e-8)
         return (obs - self.obs_running_mean) / std
+
+    def _save_obs_stats(self, path):
+        stats_path = path.replace(".pth", "_obs_stats.npz")
+        if self.obs_running_mean is not None:
+            np.savez(stats_path, mean=self.obs_running_mean, var=self.obs_running_var, count=self.obs_count)
+
+    def _load_obs_stats(self, path):
+        stats_path = path.replace(".pth", "_obs_stats.npz")
+        if os.path.exists(stats_path):
+            data = np.load(stats_path)
+            self.obs_running_mean = data["mean"]
+            self.obs_running_var = data["var"]
+            self.obs_count = int(data["count"])
+            print(f"Loaded obs normalization stats from {stats_path}")
 
     def normalize_reward(self, reward):
         return reward / 100.0
@@ -312,6 +337,8 @@ class MultiAgentPPOTrainer:
         advantages = torch.FloatTensor([t["advantages"] for t in all_data]).to(self.device)
         returns = torch.FloatTensor([t["returns"] for t in all_data]).to(self.device)
         action_masks = torch.tensor(np.array([t["action_mask"] for t in all_data]), dtype=torch.bool).to(self.device)
+        all_lstm_h = torch.stack([t["lstm_h"] for t in all_data]).to(self.device)
+        all_lstm_c = torch.stack([t["lstm_c"] for t in all_data]).to(self.device)
         
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
 
@@ -339,9 +366,11 @@ class MultiAgentPPOTrainer:
                 batch_old_log_probs = old_log_probs[batch_idx]
                 batch_advantages = advantages[batch_idx]
                 batch_returns = returns[batch_idx]
+                batch_h = all_lstm_h[batch_idx].permute(1, 0, 2).contiguous()
+                batch_c = all_lstm_c[batch_idx].permute(1, 0, 2).contiguous()
 
                 self.shared_policy.train()
-                logits, values, _ = self.shared_policy(batch_neigh, batch_numeric, None)
+                logits, values, _ = self.shared_policy(batch_neigh, batch_numeric, (batch_h, batch_c))
                 values = values.squeeze(1)
                 
                 batch_action_masks = action_masks[batch_idx]
@@ -511,6 +540,7 @@ class MultiAgentPPOTrainer:
         self.shared_policy_path_partial = os.path.join(self.network_folder, f"{self.network_name}_PARTIAL.pth")
         if os.path.exists(self.shared_policy_path_complete):
             self.shared_policy.load_state_dict(torch.load(self.shared_policy_path_complete))
+            self._load_obs_stats(self.shared_policy_path_complete)
             print(f"Loaded shared policy from {self.shared_policy_path_complete}")
             return
         
@@ -599,9 +629,11 @@ class MultiAgentPPOTrainer:
                 
                 if (update % 1 == 0 or update == self.num_updates - 1):
                     metrics_logger.plot_metrics()
-                    torch.save(self.shared_policy.state_dict(), self.shared_policy_path_partial)       
-            
+                    torch.save(self.shared_policy.state_dict(), self.shared_policy_path_partial)
+                    self._save_obs_stats(self.shared_policy_path_partial)
+
             torch.save(self.shared_policy.state_dict(), self.shared_policy_path_complete)
+            self._save_obs_stats(self.shared_policy_path_complete)
             if os.path.exists(self.shared_policy_path_partial):
                 os.remove(self.shared_policy_path_partial)
         finally:

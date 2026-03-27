@@ -2,6 +2,7 @@ import yaml
 from environments.env import EconomyEnv
 import os
 import torch
+import numpy as np
 import argparse
 from training.mobile_agent_policy import MobileAgentPolicy
 from training.vectorized_env import ZeroTaxPlannerWrapper
@@ -68,8 +69,17 @@ def main(config_path: str, try_load: bool):
         random_sampling = True
 
     if network is not None:
-        for agent in env.all_agents:
+        stats_path = os.path.join("networks", f"{network_name}_COMPLETE_obs_stats.npz")
+        if not os.path.exists(stats_path):
+            stats_path = os.path.join("networks", f"{network_name}_PARTIAL_obs_stats.npz")
+        obs_stats = None
+        if os.path.exists(stats_path):
+            data = np.load(stats_path)
+            obs_stats = {"mean": data["mean"], "var": data["var"]}
+            print(f"Loaded obs normalization stats from {stats_path}")
+        for agent in env.mobile_agents:
             agent.policy_net = network
+            agent.obs_stats = obs_stats
 
     
     if random_sampling:
