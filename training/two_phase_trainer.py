@@ -493,26 +493,35 @@ class TwoPhaseTrainer:
                 
                 agent_key = f"env{env_idx}_agent{agent_id}"
                 lstm_state = self.mobile_trainer.lstm_states.get(agent_key, None)
-                
+
+                lstm_hidden_size = self.mobile_trainer.shared_policy.lstm_hidden_size
+                lstm_num_layers = self.mobile_trainer.shared_policy.lstm_num_layers
+                if lstm_state is not None:
+                    input_lstm_h = lstm_state[0].detach().squeeze(1).cpu()
+                    input_lstm_c = lstm_state[1].detach().squeeze(1).cpu()
+                else:
+                    input_lstm_h = torch.zeros(lstm_num_layers, lstm_hidden_size)
+                    input_lstm_c = torch.zeros(lstm_num_layers, lstm_hidden_size)
+
                 action, log_prob, value, lstm_state_out = self._get_mobile_agent_action(
-                    neighbourhood, 
-                    numeric, 
-                    lstm_state, 
+                    neighbourhood,
+                    numeric,
+                    lstm_state,
                     action_mask
                 )
-                
+
                 if lstm_state_out is not None:
                     self.mobile_trainer.lstm_states[agent_key] = (
                         lstm_state_out[0].detach(),
                         lstm_state_out[1].detach()
                     )
-                    
+
                 action_int = action.item()
                 reward, post_utility = vec_env.agent_step(env_idx, agent_id, action_int)
-                
+
                 if env_idx not in mobile_current_buffers:
                     mobile_current_buffers[env_idx] = []
-                    
+
                 mobile_current_buffers[env_idx].append({
                     "neighbourhood": neighbourhood.squeeze(0).detach(),
                     "numeric": numeric.squeeze(0).detach(),
@@ -525,7 +534,9 @@ class TwoPhaseTrainer:
                     "action_mask": action_mask,
                     "agent_id": agent_id,
                     "env_idx": env_idx,
-                    "buffer_key": f"env{env_idx}_agent{agent_id}"
+                    "buffer_key": f"env{env_idx}_agent{agent_id}",
+                    "lstm_h": input_lstm_h,
+                    "lstm_c": input_lstm_c,
                 })
                 
     def _get_mobile_agent_action(self, neighbourhood, numeric, lstm_state, action_mask):
@@ -575,7 +586,9 @@ class TwoPhaseTrainer:
                     "reward": entry["reward"],
                     "utility": entry["utility"],
                     "original_reward": entry["original_reward"],
-                    "action_mask": entry["action_mask"]
+                    "action_mask": entry["action_mask"],
+                    "lstm_h": entry["lstm_h"],
+                    "lstm_c": entry["lstm_c"],
                 })
                 
             for buffer_key, agent_buffer in agent_buffers.items():
