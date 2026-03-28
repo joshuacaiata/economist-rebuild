@@ -381,7 +381,7 @@ class TwoPhaseTrainer:
                 pre_utility = vec_env.pipes[env_idx].recv()
                 
                 vec_env.pipes[env_idx].send(("planner_step", action))
-                post_utility, _ = vec_env.pipes[env_idx].recv()
+                _, post_utility = vec_env.pipes[env_idx].recv()
                 
                 reward = post_utility - pre_utility
                 normalized_reward = self.planner_trainer.normalize_reward(reward)
@@ -590,15 +590,11 @@ class TwoPhaseTrainer:
         print("Updating mobile agent policies...")
         mobile_avg_utility = self.mobile_trainer.update_agents(mobile_metrics_logger)
         print(f"Mobile agents average utility: {mobile_avg_utility:.4f}")
-        mobile_utility_history.append(mobile_avg_utility)
-        
+
         print("Updating planner policy...")
         planner_avg_utility = self.planner_trainer.update_planner(planner_metrics_logger)
         print(f"Planner average utility: {planner_avg_utility:.4f}")
-        
-        if planner_avg_utility != 0:
-            planner_utility_history.append(planner_avg_utility)
-            
+
         return mobile_avg_utility, planner_avg_utility
         
     def _save_interim_models_if_needed(self, episode, num_joint_episodes, mobile_metrics_logger, planner_metrics_logger):

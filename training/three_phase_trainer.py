@@ -269,19 +269,12 @@ class ThreePhaseTrainer:
         
         for step in range(episode_length):
             is_tax_year_start = (step > 0) and (step % tax_period_length == 0)
-            
+
             if is_tax_year_start:
                 self._handle_tax_year_start(vec_env, random_planner_actions, planner_current_buffers)
-                
-                self._handle_mobile_agent_steps(vec_env, mobile_current_buffers)
-                
-                self._handle_bank_step(vec_env, random_bank_actions, bank_current_buffers)
-            else:
-                self._handle_mobile_agent_steps(vec_env, mobile_current_buffers)
-                
-                self._handle_tax_year_start(vec_env, random_planner_actions, planner_current_buffers)
-                
-                self._handle_bank_step(vec_env, random_bank_actions, bank_current_buffers)
+
+            self._handle_mobile_agent_steps(vec_env, mobile_current_buffers)
+            self._handle_bank_step(vec_env, random_bank_actions, bank_current_buffers)
             
             self._update_environment_state(vec_env)
         
@@ -468,22 +461,15 @@ class ThreePhaseTrainer:
         print("Updating mobile agent policies...")
         mobile_avg_utility = self.mobile_trainer.update_agents(mobile_metrics_logger)
         print(f"Mobile agents average utility: {mobile_avg_utility:.4f}")
-        mobile_utility_history.append(mobile_avg_utility)
-        
+
         print("Updating planner policy...")
         planner_avg_utility = self.planner_trainer.update_planner(planner_metrics_logger)
         print(f"Planner average utility: {planner_avg_utility:.4f}")
-        
+
         print("Updating bank policy...")
         bank_avg_utility = self.bank_trainer.update_bank(bank_metrics_logger)
         print(f"Bank average utility: {bank_avg_utility:.4f}")
-        
-        if planner_avg_utility != 0:
-            planner_utility_history.append(planner_avg_utility)
-            
-        if bank_avg_utility != 0:
-            bank_utility_history.append(bank_avg_utility)
-            
+
         return mobile_avg_utility, planner_avg_utility, bank_avg_utility
         
     def _save_interim_models_if_needed(self, episode, num_joint_episodes, mobile_metrics_logger, 

@@ -146,7 +146,11 @@ class PlannerPPOTrainer:
                 self.vec_env.step_envs()
                 continue
                 
-            lstm_states_batch = [], [] 
+            lstm_states_batch = [[], []]
+            per_env_lstm_h = []
+            per_env_lstm_c = []
+            lstm_hidden_size = self.policy_net.lstm_hidden_size
+            lstm_num_layers = self.policy_net.lstm_num_layers
             for env_idx in env_indices:
                 env_key = f"env{env_idx}"
                 lstm_state = self.lstm_states.get(env_key, None)
@@ -154,6 +158,11 @@ class PlannerPPOTrainer:
                     h, c = lstm_state
                     lstm_states_batch[0].append(h)
                     lstm_states_batch[1].append(c)
+                    per_env_lstm_h.append(h.detach().squeeze(1).cpu())
+                    per_env_lstm_c.append(c.detach().squeeze(1).cpu())
+                else:
+                    per_env_lstm_h.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
+                    per_env_lstm_c.append(torch.zeros(lstm_num_layers, lstm_hidden_size))
             
             lstm_state_batch = None
             if lstm_states_batch[0]:
@@ -226,7 +235,9 @@ class PlannerPPOTrainer:
                         "value": values_batch[i].detach() if isinstance(values_batch, torch.Tensor) else torch.tensor(0.0, device=self.device),
                         "reward": normalized_reward,
                         "utility": post_utility,
-                        "original_reward": reward
+                        "original_reward": reward,
+                        "lstm_h": per_env_lstm_h[i],
+                        "lstm_c": per_env_lstm_c[i],
                     })
                     
                 except (EOFError, BrokenPipeError):
@@ -257,12 +268,14 @@ class PlannerPPOTrainer:
         
     def update_policy(self, all_data, logger):
         observations = torch.stack([t["obs"] for t in all_data]).to(self.device)
-        
+
         actions = torch.tensor(np.array([t["action"] for t in all_data]), dtype=torch.float32).to(self.device)
-        
+
         old_log_probs = torch.stack([t["log_prob"] for t in all_data]).to(self.device)
         advantages = torch.FloatTensor([t["advantages"] for t in all_data]).to(self.device)
         returns = torch.FloatTensor([t["returns"] for t in all_data]).to(self.device)
+        all_lstm_h = torch.stack([t["lstm_h"] for t in all_data]).to(self.device)
+        all_lstm_c = torch.stack([t["lstm_c"] for t in all_data]).to(self.device)
         
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
@@ -287,9 +300,11 @@ class PlannerPPOTrainer:
                 batch_old_log_probs = old_log_probs[batch_idx]
                 batch_advantages = advantages[batch_idx]
                 batch_returns = returns[batch_idx]
-                
+                batch_h = all_lstm_h[batch_idx].permute(1, 0, 2).contiguous()
+                batch_c = all_lstm_c[batch_idx].permute(1, 0, 2).contiguous()
+
                 self.policy_net.train()
-                logits, values, _ = self.policy_net(batch_obs, None)
+                logits, values, _ = self.policy_net(batch_obs, (batch_h, batch_c))
                 values = values.squeeze(1)
                 
                 pred_actions = torch.sigmoid(logits)
@@ -312,22 +327,35 @@ class PlannerPPOTrainer:
                 
                 self.optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 0.5)
-                self.optimizer.step()
-                
-                total_policy_loss += policy_loss.item()
-                total_value_loss += value_loss.item()
-                total_loss += loss.item()
-                batches += 1
-                
-                log_ratio = new_log_probs - batch_old_log_probs
-                approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).item()
-                approx_kl_divs.append(approx_kl_div)
-                
-            avg_kl = sum(approx_kl_divs) / len(approx_kl_divs)
-            if avg_kl > self.target_kl:
-                break
-                
+                clip_norm = self.config.get("planner_agent_training", {}).get("gradient_clip_norm", 10.0)
+                torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), clip_norm)
+
+                has_nan = False
+                for param in self.policy_net.parameters():
+                    if param.grad is not None and torch.isnan(param.grad).any():
+                        print("Warning: NaN gradient detected in planner, skipping update")
+                        has_nan = True
+                        break
+
+                if not has_nan:
+                    self.optimizer.step()
+
+                    total_policy_loss += policy_loss.item()
+                    total_value_loss += value_loss.item()
+                    total_loss += loss.item()
+                    batches += 1
+
+                    log_ratio = new_log_probs - batch_old_log_probs
+                    approx_kl_div = torch.mean((torch.exp(log_ratio) - 1) - log_ratio).item()
+                    approx_kl_divs.append(approx_kl_div)
+
+            if approx_kl_divs:
+                avg_kl = sum(approx_kl_divs) / len(approx_kl_divs)
+                if avg_kl > self.target_kl:
+                    break
+
+        if batches == 0:
+            batches = 1
         avg_policy_loss = total_policy_loss / batches
         avg_value_loss = total_value_loss / batches
         avg_total_loss = total_loss / batches
