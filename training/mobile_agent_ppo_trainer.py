@@ -183,8 +183,8 @@ class MultiAgentPPOTrainer:
                         actions_batch.append(0)
                         log_probs_batch.append(0.0)
 
-                actions_batch = torch.tensor(actions_batch, device=self.device)
-                log_probs_batch = torch.tensor(log_probs_batch, device=self.device)
+                actions_batch = torch.tensor(actions_batch, device=self.device, dtype=torch.long)
+                log_probs_batch = torch.tensor(log_probs_batch, device=self.device, dtype=torch.float32)
             else:
                 self.shared_policy.eval()
                 with torch.no_grad():

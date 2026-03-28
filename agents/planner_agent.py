@@ -29,6 +29,7 @@ class PlannerAgent(BaseAgent):
         self.previous_year_incomes = {agent.agent_id: 0 for agent in self.env.mobile_agents}
         self.policy_net = None
         self.rollout_buffer = None
+        self.obs_stats = None
         
     def get_observation(self, env):
         """
@@ -144,6 +145,10 @@ class PlannerAgent(BaseAgent):
         # flatten all features
         flattened_observation = np.concatenate([market_features, inventory_features, tax_features, time_features])
 
+        if self.obs_stats is not None:
+            std = np.sqrt(self.obs_stats["var"] + 1e-8)
+            flattened_observation = (flattened_observation - self.obs_stats["mean"]) / std
+
         return torch.FloatTensor(flattened_observation)
 
     def get_action(self, flattened_obs, random_sampling=False):
@@ -159,10 +164,9 @@ class PlannerAgent(BaseAgent):
 
         self.policy_net.eval()
         with torch.no_grad():
-            output = self.policy_net(flattened_obs.unsqueeze(0))
-            tax_rates = output[0] if isinstance(output, tuple) else output
-            tax_rates = torch.sigmoid(tax_rates).squeeze(0)
-            
+            mean, std, value, lstm_state = self.policy_net(flattened_obs.unsqueeze(0))
+            tax_rates = mean.squeeze(0)
+
         return tax_rates.cpu().numpy()
     
     def step(self, action):

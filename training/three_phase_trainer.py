@@ -207,6 +207,7 @@ class ThreePhaseTrainer:
         planner_trainer = self.two_phase_trainer._setup_planner_trainer(vec_env, config, 0)
         planner_trainer.policy_net = planner_policy
         planner_trainer.policy_net.to(planner_trainer.device)
+        planner_trainer._load_obs_stats(self.planner_policy_path)
         return planner_trainer
         
     def _setup_bank_trainer(self, vec_env, config):
@@ -486,7 +487,8 @@ class ThreePhaseTrainer:
                 f"planner_agent-phase_3-n_agents={self.planner_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_PARTIAL.pth"
             )
             torch.save(self.planner_trainer.policy_net.state_dict(), interim_planner_path)
-            
+            self.planner_trainer._save_obs_stats(interim_planner_path)
+
             interim_bank_path = os.path.join(
                 self.network_folder, 
                 f"bank_agent-phase_3-n_agents={self.bank_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_PARTIAL.pth"
@@ -549,7 +551,8 @@ class ThreePhaseTrainer:
             f"planner_agent-phase_3-n_agents={self.planner_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_COMPLETE.pth"
         )
         torch.save(self.planner_trainer.policy_net.state_dict(), final_planner_path)
-        
+        self.planner_trainer._save_obs_stats(final_planner_path)
+
         final_bank_path = os.path.join(
             self.network_folder, 
             f"bank_agent-phase_3-n_agents={self.bank_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_COMPLETE.pth"

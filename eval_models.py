@@ -182,6 +182,8 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
                 print("Force-enabled planner with zero tax policy (matching training)")
             elif planner_network is not None and env.has_planner:
                 env.planner.policy_net = planner_network
+                planner_obs_stats = load_obs_stats(planner_network_path)
+                env.planner.obs_stats = planner_obs_stats
             elif phase < 2 and env.has_planner:
                 env.planner = ZeroTaxPlannerWrapper(env.planner)
                 env.has_planner = True
@@ -344,6 +346,8 @@ def main(config_path: str, try_load: bool, phase: int, episode_length: int, plot
             print("Force-enabled planner with zero tax policy (matching training)")
         elif planner_network is not None and env.has_planner:
             env.planner.policy_net = planner_network
+            planner_obs_stats = load_obs_stats(planner_network_path)
+            env.planner.obs_stats = planner_obs_stats
         elif phase < 2 and env.has_planner:
             env.planner = ZeroTaxPlannerWrapper(env.planner)
             env.has_planner = True

@@ -70,6 +70,10 @@ class PlannerPPOTrainer:
             "count": 0,
             "gamma": 0.99
         }
+
+        self.obs_running_mean = None
+        self.obs_running_var = None
+        self.obs_count = 0
         
         self.lstm_states = {}
 
@@ -91,7 +95,35 @@ class PlannerPPOTrainer:
             normalized_reward = abs(normalized_reward) * original_sign
         
         return np.clip(normalized_reward, -10.0, 10.0)
-        
+
+    def _normalize_obs(self, obs):
+        if self.obs_running_mean is None:
+            self.obs_running_mean = np.zeros_like(obs)
+            self.obs_running_var = np.ones_like(obs)
+
+        self.obs_count += 1
+        delta = obs - self.obs_running_mean
+        self.obs_running_mean += delta / self.obs_count
+        delta2 = obs - self.obs_running_mean
+        self.obs_running_var += (delta * delta2 - self.obs_running_var) / self.obs_count
+
+        std = np.sqrt(self.obs_running_var + 1e-8)
+        return (obs - self.obs_running_mean) / std
+
+    def _save_obs_stats(self, path):
+        stats_path = path.replace(".pth", "_obs_stats.npz")
+        if self.obs_running_mean is not None:
+            np.savez(stats_path, mean=self.obs_running_mean, var=self.obs_running_var, count=self.obs_count)
+
+    def _load_obs_stats(self, path):
+        stats_path = path.replace(".pth", "_obs_stats.npz")
+        if os.path.exists(stats_path):
+            data = np.load(stats_path)
+            self.obs_running_mean = data["mean"]
+            self.obs_running_var = data["var"]
+            self.obs_count = int(data["count"])
+            print(f"Loaded planner obs normalization stats from {stats_path}")
+
     def collect_rollouts(self, random_sampling=False):
         if random_sampling:
             print(f"Collecting rollouts with random sampling.")
@@ -127,7 +159,8 @@ class PlannerPPOTrainer:
                 
             obs_tensors = []
             for obs in observations:
-                flattened_obs = torch.FloatTensor(obs).to(self.device)
+                normalized_obs = self._normalize_obs(obs)
+                flattened_obs = torch.FloatTensor(normalized_obs).to(self.device)
                 obs_tensors.append(flattened_obs)
                 
             obs_batch = torch.stack(obs_tensors)
@@ -192,17 +225,14 @@ class PlannerPPOTrainer:
             else:
                 self.policy_net.eval()
                 with torch.no_grad():
-                    logits, values_batch, lstm_state_out = self.policy_net(obs_batch, lstm_state_batch)
-                    
-                    actions_tensor = torch.sigmoid(logits)
-                    
-                    sigma = 0.1
-                    dist = torch.distributions.Normal(actions_tensor, sigma)
-                    
-                    sampled_actions = actions_tensor
+                    mean, std, values_batch, lstm_state_out = self.policy_net(obs_batch, lstm_state_batch)
+
+                    dist = torch.distributions.Normal(mean, std)
+                    sampled_actions = dist.sample()
+                    sampled_actions = torch.clamp(sampled_actions, 0.0, 1.0)
                     log_probs_batch = torch.sum(dist.log_prob(sampled_actions), dim=1)
-                    
-                    actions_batch = [action.cpu().numpy() for action in actions_tensor]
+
+                    actions_batch = [action.cpu().numpy() for action in sampled_actions]
             
             if lstm_state_out is not None:
                 h_out, c_out = lstm_state_out
@@ -304,16 +334,12 @@ class PlannerPPOTrainer:
                 batch_c = all_lstm_c[batch_idx].permute(1, 0, 2).contiguous()
 
                 self.policy_net.train()
-                logits, values, _ = self.policy_net(batch_obs, (batch_h, batch_c))
+                mean, std, values, lstm_state_out = self.policy_net(batch_obs, (batch_h, batch_c))
                 values = values.squeeze(1)
-                
-                pred_actions = torch.sigmoid(logits)
-                
-                sigma = 0.1
-                dist = torch.distributions.Normal(pred_actions, sigma)
-                
+
+                dist = torch.distributions.Normal(mean, std)
                 new_log_probs = torch.sum(dist.log_prob(batch_actions), dim=1)
-                
+
                 entropy = dist.entropy().mean()
                 
                 ratio = torch.exp(new_log_probs - batch_old_log_probs)
@@ -416,6 +442,7 @@ class PlannerPPOTrainer:
         
         if os.path.exists(shared_policy_path_complete):
             self.policy_net.load_state_dict(torch.load(shared_policy_path_complete))
+            self._load_obs_stats(shared_policy_path_complete)
             print(f"Loaded policy from {shared_policy_path_complete}")
             return
             
@@ -486,8 +513,10 @@ class PlannerPPOTrainer:
                 if (update % 1 == 0 or update == self.num_updates - 1):
                     metrics_logger.plot_metrics()
                     torch.save(self.policy_net.state_dict(), shared_policy_path_partial)
-                    
+                    self._save_obs_stats(shared_policy_path_partial)
+
             torch.save(self.policy_net.state_dict(), shared_policy_path_complete)
+            self._save_obs_stats(shared_policy_path_complete)
             
             if os.path.exists(shared_policy_path_partial):
                 os.remove(shared_policy_path_partial)

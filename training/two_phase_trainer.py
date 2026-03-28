@@ -337,7 +337,8 @@ class TwoPhaseTrainer:
             
         obs_tensors = []
         for obs in observations:
-            flattened_obs = torch.FloatTensor(obs).to(self.planner_trainer.device)
+            normalized_obs = self.planner_trainer._normalize_obs(obs)
+            flattened_obs = torch.FloatTensor(normalized_obs).to(self.planner_trainer.device)
             obs_tensors.append(flattened_obs)
             
         action_masks = []
@@ -355,7 +356,21 @@ class TwoPhaseTrainer:
         obs_batch = torch.stack(obs_tensors)
         
         lstm_states_batch = self._get_planner_lstm_states_batch(env_indices)
-        
+
+        planner_lstm_hidden_size = self.planner_trainer.policy_net.lstm_hidden_size
+        planner_lstm_num_layers = self.planner_trainer.policy_net.lstm_num_layers
+        per_env_planner_lstm_h = []
+        per_env_planner_lstm_c = []
+        for env_idx in env_indices:
+            env_key = f"env{env_idx}"
+            lstm_state = self.planner_trainer.lstm_states.get(env_key, None)
+            if lstm_state is not None:
+                per_env_planner_lstm_h.append(lstm_state[0].detach().squeeze(1).cpu())
+                per_env_planner_lstm_c.append(lstm_state[1].detach().squeeze(1).cpu())
+            else:
+                per_env_planner_lstm_h.append(torch.zeros(planner_lstm_num_layers, planner_lstm_hidden_size))
+                per_env_planner_lstm_c.append(torch.zeros(planner_lstm_num_layers, planner_lstm_hidden_size))
+
         if random_sampling:
             actions_batch, log_probs_batch, values_batch, lstm_state_out = self._get_random_planner_actions(
                 len(obs_tensors),
@@ -389,13 +404,15 @@ class TwoPhaseTrainer:
                 planner_current_buffers[env_idx].append({
                     "obs": obs_tensors[i].detach(),
                     "action": action,
-                    "log_prob": log_probs_batch[i].detach() if isinstance(log_probs_batch, torch.Tensor) 
+                    "log_prob": log_probs_batch[i].detach() if isinstance(log_probs_batch, torch.Tensor)
                               else torch.tensor(log_probs_batch[i], device=self.planner_trainer.device),
-                    "value": values_batch[i].detach() if isinstance(values_batch, torch.Tensor) 
+                    "value": values_batch[i].detach() if isinstance(values_batch, torch.Tensor)
                             else torch.tensor(0.0, device=self.planner_trainer.device),
                     "reward": normalized_reward,
                     "utility": post_utility,
-                    "original_reward": reward
+                    "original_reward": reward,
+                    "lstm_h": per_env_planner_lstm_h[i],
+                    "lstm_c": per_env_planner_lstm_c[i],
                 })
             except (EOFError, BrokenPipeError):
                 continue
@@ -446,20 +463,17 @@ class TwoPhaseTrainer:
     def _get_planner_network_actions(self, obs_batch, lstm_states_batch):
         self.planner_trainer.policy_net.eval()
         with torch.no_grad():
-            logits, values_batch, lstm_state_out = self.planner_trainer.policy_net(
+            mean, std, values_batch, lstm_state_out = self.planner_trainer.policy_net(
                 obs_batch, lstm_states_batch
             )
-            
-            actions_tensor = torch.sigmoid(logits)
-            
-            sigma = 0.1
-            dist = torch.distributions.Normal(actions_tensor, sigma)
-            
-            sampled_actions = actions_tensor
+
+            dist = torch.distributions.Normal(mean, std)
+            sampled_actions = dist.sample()
+            sampled_actions = torch.clamp(sampled_actions, 0.0, 1.0)
             log_probs_batch = torch.sum(dist.log_prob(sampled_actions), dim=1)
-            
-            actions_batch = [action.cpu().numpy() for action in actions_tensor]
-            
+
+            actions_batch = [action.cpu().numpy() for action in sampled_actions]
+
         return actions_batch, log_probs_batch, values_batch, lstm_state_out
         
     def _update_planner_lstm_states(self, lstm_state_out, env_indices):
@@ -617,13 +631,15 @@ class TwoPhaseTrainer:
                 f"mobile_agents-phase_2-n_agents={self.mobile_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_PARTIAL.pth"
             )
             torch.save(self.mobile_trainer.shared_policy.state_dict(), interim_mobile_path)
-            
+            self.mobile_trainer._save_obs_stats(interim_mobile_path)
+
             interim_planner_path = os.path.join(
-                self.network_folder, 
+                self.network_folder,
                 f"planner_agent-phase_2-n_agents={self.planner_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_PARTIAL.pth"
             )
             torch.save(self.planner_trainer.policy_net.state_dict(), interim_planner_path)
-            
+            self.planner_trainer._save_obs_stats(interim_planner_path)
+
             mobile_metrics_logger.plot_metrics()
             planner_metrics_logger.plot_metrics()
             
@@ -663,12 +679,14 @@ class TwoPhaseTrainer:
             f"mobile_agents-phase_2-n_agents={self.mobile_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_COMPLETE.pth"
         )
         torch.save(self.mobile_trainer.shared_policy.state_dict(), final_mobile_path)
-        
+        self.mobile_trainer._save_obs_stats(final_mobile_path)
+
         final_planner_path = os.path.join(
-            self.network_folder, 
+            self.network_folder,
             f"planner_agent-phase_2-n_agents={self.planner_trainer.vec_env.n_agents}-experiment_name={self.experiment_name}_COMPLETE.pth"
         )
         torch.save(self.planner_trainer.policy_net.state_dict(), final_planner_path)
+        self.planner_trainer._save_obs_stats(final_planner_path)
 
         interim_mobile_path = os.path.join(
             self.network_folder, 

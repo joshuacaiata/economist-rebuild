@@ -42,7 +42,8 @@ class PlannerPolicy(nn.Module):
             
         self.fc_post_lstm = nn.Sequential(*post_fc_layers)
         
-        self.policy_head = nn.Linear(current_size, output_size)
+        self.policy_mean_head = nn.Linear(current_size, output_size)
+        self.policy_log_std_head = nn.Linear(current_size, output_size)
         self.value_head = nn.Linear(current_size, 1)
         
     def forward(self, x, lstm_state=None):
@@ -67,7 +68,9 @@ class PlannerPolicy(nn.Module):
         
         post_lstm_features = self.fc_post_lstm(lstm_out)
         
-        tax_rates_logits = self.policy_head(post_lstm_features)
+        mean = torch.sigmoid(self.policy_mean_head(post_lstm_features))
+        log_std = torch.clamp(self.policy_log_std_head(post_lstm_features), -5.0, 0.5)
+        std = torch.exp(log_std)
         value = self.value_head(post_lstm_features)
-        
-        return tax_rates_logits, value, lstm_state 
+
+        return mean, std, value, lstm_state
